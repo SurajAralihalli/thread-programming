@@ -1,11 +1,32 @@
 #include <pthread.h>
 #include <bits/stdc++.h>
+#include <sys/time.h>
+#include <stdlib.h>
 
 using namespace std;
 
 int* partitionArr;
 int* arr;
 int* prefixSumArr;
+
+
+int get_lower_power_of_2(int x)
+{
+    // checks if x is power of 2 - 1
+    int y = x + 1;
+    if(y && (!(y & (y - 1)))) {
+        return x + 1;
+    }
+    if (x == 0) {
+        return 0;
+    }
+    x |= (x >> 1);
+    x |= (x >> 2);
+    x |= (x >> 4);
+    x |= (x >> 8);
+    x |= (x >> 16);
+    return x - (x >> 1);
+}
 
 struct quickArgs {
     int low;
@@ -44,17 +65,34 @@ struct partitionCopyArgs {
 int partitionSerial(int low, int high)
 {
     int pivot = arr[low];
-    int end = high;
-    int k = high;
-    for (int i = high; i > low; i--) {
-        if (arr[i] > pivot)
-            {
-                swap(arr[i], arr[k]);
-                k--;
-            }
+
+    int count = 0;
+    for (int i = low + 1; i <= high; i++) {
+        if (arr[i] <= pivot)
+            count++;
     }
-    swap(arr[low], arr[k]);
-    return k;
+
+    int pivotIndex = low + count;
+    swap(arr[pivotIndex], arr[low]);
+ 
+    int i = low, j = high;
+
+    while (i < pivotIndex && j > pivotIndex) {
+ 
+        while (arr[i] <= pivot) {
+            i++;
+        }
+ 
+        while (arr[j] > pivot) {
+            j--;
+        }
+ 
+        if (i < pivotIndex && j > pivotIndex) {
+            swap(arr[i++], arr[j--]);
+        }
+    }
+ 
+    return pivotIndex;
 }
 
 void* partitionWorkerBody(void* arg) {
@@ -191,7 +229,6 @@ void* partitionWorkerLeaf(void* arg) {
     }
 
     int prevSum = sum;
-    // cout << "thread_id: " << id << " sum: " << sum;
     for(int i = low + (leaf_id*block_size); i < low + (leaf_id*block_size) + n_ ; i++) {
 
         sum += partitionLeft ? (arr[i] < pivot) : (arr[i] >= pivot);
@@ -227,10 +264,11 @@ void initializeMutexArr(pthread_mutex_t* mutexArr, int num_leaf_threads) {
     }
 }
 
-int partition(int low, int high, int num_threads) {
+int partitionParallel(int low, int high, int num_threads) {
 
-    
-    int num_leaf_threads = (num_threads/2);
+    int num_tree_threads = get_lower_power_of_2(num_threads) - 1;
+    int num_leaf_threads = ( get_lower_power_of_2(num_threads) / 2 );
+
     int n = high - low + 1;
     int partitionOffset = 0;
     bool partitionLeft = true;
@@ -239,8 +277,9 @@ int partition(int low, int high, int num_threads) {
     int* treeArr = new int[2*num_leaf_threads - 1];
     pthread_cond_t* cvArr = new pthread_cond_t[2*num_leaf_threads - 1];
     pthread_mutex_t* mutexArr = new pthread_mutex_t[2*num_leaf_threads - 1];
-    pthread_t threads[2*num_leaf_threads - 1];
+    pthread_t threads[num_threads];
     partitionWorkerArgs* workerArgs[2*num_leaf_threads - 1];
+
     partitionCopyArgs* copierArgs[num_threads];
 
 
@@ -269,7 +308,6 @@ int partition(int low, int high, int num_threads) {
         delete workerArgs[i];
     }
 
-
     // partition right
     partitionLeft = false;
     partitionOffset = prefixSumArr[high];
@@ -294,7 +332,6 @@ int partition(int low, int high, int num_threads) {
         delete workerArgs[i];
     }
 
-
     //copy to arr
     for(int i=0;i<num_threads;i++) {
         copierArgs[i] = new partitionCopyArgs(low, n, i, num_threads);
@@ -311,12 +348,22 @@ int partition(int low, int high, int num_threads) {
     delete [] cvArr;
     delete [] mutexArr;
 
-    cout << "@@@@@@ parallel partition, low: " << low << " high: " << high << " num_threads: " << num_threads << " partition Index: " << (low + partitionOffset) << endl;
     return (low + partitionOffset);
 
 }
 
-void* quickSort(void* qArg) {
+
+void quicksortSerial(int low, int high) {
+
+    if(low < high) {
+        int pi = partitionSerial(low, high);
+        quicksortSerial(low, pi-1);
+        quicksortSerial(pi+1, high);
+    }
+    
+}
+
+void* quickSortParallel(void* qArg) {
     quickArgs* q = (quickArgs*)qArg;
     int low = q->low;
     int high = q->high;
@@ -324,72 +371,105 @@ void* quickSort(void* qArg) {
 
     if (low < high) {
 
-        int pi;
-        if(num_threads>=4){
-            pi = partition(low, high, num_threads);
-        }
-        else {
-            pi = partitionSerial(low, high);
-        }
+        if(high-low > 2500 && num_threads>=4) {
 
-        quickArgs* t1Args = new quickArgs(low, pi-1,(num_threads/2));
-        quickArgs* t2Args = new quickArgs(pi+1, high,(num_threads/2));
+            int pi = partitionParallel(low, high, num_threads);
 
-        if(high-low > 1000 && num_threads>=4) {
+            int left_threads = ((pi-low) / (high - low)) * num_threads;
 
-            cout << "##### parallel quicksort, low: " << low << " high: " << high << " num_threads: " << num_threads << endl;
+            quickArgs* t1Args = new quickArgs(low, pi-1, left_threads - 1);
+            quickArgs* t2Args = new quickArgs(pi+1, high, num_threads - left_threads - 1);
 
             pthread_t t1, t2;
             
-            pthread_create(&t1, NULL, quickSort, (void*)t1Args);
-            pthread_create(&t2, NULL, quickSort, (void*)t2Args);
+            pthread_create(&t1, NULL, quickSortParallel, (void*)t1Args);
+            pthread_create(&t2, NULL, quickSortParallel, (void*)t2Args);
 
             pthread_join(t1, NULL);
             pthread_join(t2, NULL);
 
+            delete t1Args;
+            delete t2Args;
+
 
         }
         else {
-            quickSort((void*)t1Args);
-            quickSort((void*)t2Args);
+            quicksortSerial(low, high);
         }
 
-        delete t1Args;
-        delete t2Args;
     }
     return NULL;
 
 }
 
 
-int main() {
-
-    int N = 10000000;
-    int num_threads = 2048;
-
+bool benchmark(int N, int num_threads) {
     arr = new int[N];
     prefixSumArr = new int[N];
     partitionArr = new int[N];
     
-
+    srand(16);
     for(int i=0;i<N;i++) {
-        arr[i] = rand() % 1000;
+        arr[i] = rand();
     }
 
-    // for(int i=N;i>0;i--) {
-    //     arr[N-i] = i;
-    // }
+    struct timeval start_time;
+    struct timeval end_time;
+    struct timeval diff_time;
 
+    
     quickArgs* qArgs = new quickArgs(0, N-1, num_threads);
 
-    quickSort((void*)qArgs);
+    gettimeofday(&start_time, NULL);
 
-    for(int i=0;i<N;i++) {
-        cout << arr[i] << " ";
+    // call quick sort
+    quickSortParallel((void*)qArgs);
+
+    gettimeofday(&end_time, NULL);
+    timersub(&end_time, &start_time, &diff_time);
+
+    cout << "N:"<< N << ",num_threads:" << num_threads << ",sec:" << diff_time.tv_sec << ",microsec:" << diff_time.tv_usec << endl;
+
+    bool test = true;
+    int prev = arr[0];
+    for(int i=1;i<N;i++) {
+        if(arr[i]<prev) {
+            test = false;
+            break;
+        }
+        prev = arr[i];
     }
-    cout << endl;
 
     delete [] arr;
+
+    return test;
+
+}
+
+int main() {
+
+    // vector<int> threads = {0,4,5,6,16,17,18,32,33,34,64,65,66};
+    // for(int t: threads) {
+    //     bool ret = benchmark(100000000, t);
+    //     if(ret == false) {
+    //         cout << "FAIL" << endl;
+    //     }
+    // }
+
+    // for(int i=0; i<=100000000; i+=10000000) {
+    //     bool ret = benchmark(i, 16);
+    //     if(ret == false) {
+    //         cout << "FAIL" << endl;
+    //     }
+    //     ret = benchmark(i, 32);
+    //     if(ret == false) {
+    //         cout << "FAIL" << endl;
+    //     }
+    // }
+
+    benchmark(1000000, 16);
+    benchmark(10000000, 16);
+    benchmark(100000000, 16);
 
     return 0;
 }
