@@ -22,7 +22,7 @@ void wait(semaphore* sem) {
 
 void signal(semaphore* sem) {
   
-  sem->count++; //decrement the count
+  sem->count++; //increment the count
   
   if(sem->count <= 0) { //if sem count <= 0, some process is waiting
     int pid = sem->processQueue.front();
