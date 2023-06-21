@@ -28,7 +28,7 @@ void signal(semaphore* sem) {
     int pid = sem->processQueue.front();
     sem->processQueue.pop()
    
-    readyQueue.push(pid); //make the process ready so that it can acquire the semaphore when it becomes ready
+    readyQueue.push(pid); //make the process ready so that it can acquire the semaphore when it becomes current
   }
   
   return;
