@@ -12,9 +12,9 @@ void wait(semaphore* sem) {
   
   if(sem->count < 0) { //if sem count < 0, add the process to wait queue
     sem->processQueue.push(curPid);
+
+    //call to reschedule
   }
-  
-  //call to reschedule
   
   return;
 }
@@ -24,7 +24,7 @@ void signal(semaphore* sem) {
   
   sem->count++; //increment the count
   
-  if(sem->count <= 0) { //if sem count <= 0, some process is waiting
+  if(!sem->processQueue.empty()) { //if sem count <= 0, some process is waiting
     int pid = sem->processQueue.front();
     sem->processQueue.pop()
    
