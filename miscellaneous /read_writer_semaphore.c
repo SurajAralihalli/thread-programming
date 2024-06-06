@@ -8,11 +8,33 @@ sem_t resource;
 pthread_mutex_t rmutex;
 int readCount = 0;
 
-// Function declarations
-void read_acquire();
-void read_release();
-void write_acquire();
-void write_release();
+// Function definitions
+void read_acquire() {
+    pthread_mutex_lock(&rmutex);
+    readCount++;
+    if (readCount == 1) {
+        sem_wait(&resource);
+    }
+    pthread_mutex_unlock(&rmutex);
+}
+
+void read_release() {
+    pthread_mutex_lock(&rmutex);
+    readCount--;
+    if (readCount == 0) {
+        sem_post(&resource);
+    }
+    pthread_mutex_unlock(&rmutex);
+}
+
+void write_acquire() {
+    sem_wait(&resource);
+}
+
+void write_release() {
+    sem_post(&resource);
+}
+
 
 void* reader(void* arg) {
     long id = (long)arg;
@@ -68,29 +90,4 @@ int main() {
     return 0;
 }
 
-// Function definitions
-void read_acquire() {
-    pthread_mutex_lock(&rmutex);
-    readCount++;
-    if (readCount == 1) {
-        sem_wait(&resource);
-    }
-    pthread_mutex_unlock(&rmutex);
-}
 
-void read_release() {
-    pthread_mutex_lock(&rmutex);
-    readCount--;
-    if (readCount == 0) {
-        sem_post(&resource);
-    }
-    pthread_mutex_unlock(&rmutex);
-}
-
-void write_acquire() {
-    sem_wait(&resource);
-}
-
-void write_release() {
-    sem_post(&resource);
-}
